@@ -1,2 +1,4 @@
 flask
 requests
+ffmpeg-python
+imageio[ffmpeg]
