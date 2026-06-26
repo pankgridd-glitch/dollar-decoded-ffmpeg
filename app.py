@@ -15,44 +15,88 @@ def create_video():
         pexels_key = os.environ.get('PEXELS_API_KEY', '')
 
         if not audio_file:
-            return jsonify({"error": "audio file missing"}), 400
+            return jsonify({"error": "audio missing"}), 400
 
-        # Pexels video
+        # Multiple Pexels clips fetch karo
         r = requests.get(
-            "https://api.pexels.com/videos/search?query=stock market finance&per_page=5",
+            "https://api.pexels.com/videos/search?query=stock market finance money investing&per_page=10",
             headers={"Authorization": pexels_key}, timeout=15
         )
         videos = r.json().get('videos', [])
-        video_url = None
-        for v in videos:
-            for vf in v.get('video_files', []):
-                if vf.get('width', 0) >= 640:
-                    video_url = vf['link']
-                    break
-            if video_url:
-                break
 
         with tempfile.TemporaryDirectory() as tmp:
             audio_path = f"{tmp}/audio.mp3"
-            video_path = f"{tmp}/bg.mp4"
             output_path = f"{tmp}/out.mp4"
-
-            # Save audio
             audio_file.save(audio_path)
 
-            # Download video
-            with open(video_path, 'wb') as f:
-                vr = requests.get(video_url, timeout=120, stream=True)
-                for chunk in vr.iter_content(8192):
-                    f.write(chunk)
+            # Audio duration pata karo
+            result = subprocess.run([
+                'ffprobe', '-v', 'error', '-show_entries',
+                'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
+                audio_path
+            ], capture_output=True, text=True)
+            audio_duration = float(result.stdout.strip())
 
-            # FFmpeg
+            # Clips download karo jab tak audio duration cover na ho
+            clip_paths = []
+            total_duration = 0
+            clip_num = 0
+
+            for v in videos:
+                if total_duration >= audio_duration:
+                    break
+                for vf in v.get('video_files', []):
+                    if vf.get('width', 0) >= 1280 and vf.get('height', 0) >= 720:
+                        clip_path = f"{tmp}/clip_{clip_num}.mp4"
+                        vr = requests.get(vf['link'], timeout=120, stream=True)
+                        with open(clip_path, 'wb') as f:
+                            for chunk in vr.iter_content(8192):
+                                f.write(chunk)
+                        
+                        # Clip duration check
+                        dr = subprocess.run([
+                            'ffprobe', '-v', 'error', '-show_entries',
+                            'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
+                            clip_path
+                        ], capture_output=True, text=True)
+                        clip_dur = float(dr.stdout.strip() or 0)
+                        
+                        clip_paths.append(clip_path)
+                        total_duration += clip_dur
+                        clip_num += 1
+                        break
+
+            if not clip_paths:
+                return jsonify({"error": "No HD clips found"}), 500
+
+            # Clips concat karo
+            if len(clip_paths) == 1:
+                bg_path = clip_paths[0]
+            else:
+                # Concat list file banao
+                list_file = f"{tmp}/clips.txt"
+                with open(list_file, 'w') as f:
+                    for cp in clip_paths:
+                        f.write(f"file '{cp}'\n")
+                
+                bg_path = f"{tmp}/bg_merged.mp4"
+                subprocess.run([
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', list_file, '-c', 'copy', '-y', bg_path
+                ], check=True, timeout=300)
+
+            # Final merge — HD quality
             subprocess.run([
-                'ffmpeg', '-i', video_path, '-i', audio_path,
-                '-c:v', 'copy', '-c:a', 'aac',
+                'ffmpeg',
+                '-stream_loop', '-1', '-i', bg_path,
+                '-i', audio_path,
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-crf', '23', '-vf', 'scale=1280:720',
+                '-c:a', 'aac', '-b:a', '128k',
                 '-map', '0:v:0', '-map', '1:a:0',
-                '-shortest', '-y', output_path
-            ], check=True, timeout=300)
+                '-t', str(audio_duration),
+                '-y', output_path
+            ], check=True, timeout=600)
 
             return send_file(output_path, mimetype='video/mp4',
                            as_attachment=True,
