@@ -5,5 +5,5 @@ services:
     buildCommand: "apt-get install -y ffmpeg && pip install -r requirements.txt"
     startCommand: "python app.py"
     envVars:
-      - key: PEXELS_API_KEY
+      - key: t5Ffyw3tZsmu43O2ACmjtt1oI8ukKjlqAjk9OZ74bEebaDfwH8KQB1zK
         sync: false
